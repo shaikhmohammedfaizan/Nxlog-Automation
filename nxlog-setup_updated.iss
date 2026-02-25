@@ -59,6 +59,18 @@ var
   PSContent: String;
   ResultCode, i: Integer;
   SL: TStringList;
+  DevLabel, LinkLabel: TNewStaticText;
+  
+  procedure OpenLinks(Sender: TObject);
+begin
+  ShellExec('', 
+    'https://www.linkedin.com/in/shaikh-mohammed-faizan-ar', 
+    '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
+
+  ShellExec('', 
+    'https://github.com/shaikhmohammedfaizan/Nxlog-Automation', 
+    '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
+end;
 
 procedure InitializeWizard;
 begin
@@ -130,6 +142,37 @@ end;
   SqlCredsPage := CreateInputQueryPage(SqlAuthPage.ID, 'SQL Credentials', 'Login Details', 'Enter your SQL credentials:');
   SqlCredsPage.Add('Username:', False);
   SqlCredsPage.Add('Password:', True);
+  
+  { --- Developed By Label --- }
+  DevLabel := TNewStaticText.Create(WizardForm);
+  DevLabel.Parent := WizardForm;
+  DevLabel.Caption := 'Developed By Mohammed Faizan';
+  DevLabel.AutoSize := True;
+  DevLabel.Font.Style := [fsBold];
+  DevLabel.Font.Color := clWindowText;
+
+  // Horizontal Alignment: ScaleX(40) matches the input fields above
+  DevLabel.Left := ScaleX(50); 
+  
+  // Vertical Alignment: Aligns the first line with the top of the Next button
+  DevLabel.Top := WizardForm.NextButton.Top;
+
+  { --- Links --- }
+  LinkLabel := TNewStaticText.Create(WizardForm);
+  LinkLabel.Parent := WizardForm;
+  LinkLabel.Caption := 'LinkedIn  |  GitHub';
+  LinkLabel.AutoSize := True;
+  LinkLabel.Cursor := crHand;
+  LinkLabel.Font.Color := clBlue;
+  LinkLabel.Font.Style := [fsUnderline];
+
+  // Match horizontal alignment
+  LinkLabel.Left := ScaleX(50); 
+  
+  // Vertical Alignment: Places links directly under the name, still inline with the button area
+  LinkLabel.Top := DevLabel.Top + DevLabel.Height + ScaleY(2);
+
+  LinkLabel.OnClick := @OpenLinks;
 end;
 
 function GetCCEIP(V: string): string; begin Result := CCEIPPage.Values[0]; end;
