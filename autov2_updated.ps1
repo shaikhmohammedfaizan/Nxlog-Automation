@@ -23,6 +23,8 @@ $nxlogConfDir = "$nxlogInstallDir\conf"
 $nxlogDDir = "$nxlogConfDir\nxlog.d"
 $nxlogTemplateDir = "$curDir\nxlog.d\"
 $nxlogTargetDir   = "C:\Program Files\nxlog\conf\nxlog.d"
+$sqlInstalledValue = if ($null -eq $SqlInstalled) { "" } else { $SqlInstalled }
+$isSqlInstalled = $sqlInstalledValue.Trim().ToLowerInvariant() -eq "yes"
 
 # 1. Ensure required NXLog directories exist
 try {
@@ -74,7 +76,7 @@ if (Test-Path "$curDir\nxlog.conf") {
 }
 
 # 5. MSSQL CONFIGURATION (FIXED T-SQL SYNTAX)
-if ($SqlInstalled -eq "yes") {
+if ($isSqlInstalled) {
     if (-not $SqlInstance) {
         Write-Host "No SQL instance provided. Skipping." -ForegroundColor Yellow
     } else {
@@ -196,13 +198,12 @@ EXEC xp_instance_regwrite
         Write-Host "sqlcmd utility not found." -ForegroundColor Yellow
     }
 }
-    }
-
+    if ($isSqlInstalled) {
     $src = Join-Path $nxlogTemplateDir "mssql.conf"
     $dst = Join-Path $nxlogTargetDir   "mssql.conf"
     if (Test-Path $src) {
         Copy-Item $src $dst -Force
-        Write-Host "Mandatory NXLog config copied: $conf" -ForegroundColor Green
+        Write-Host "Mssql NXLog config copied" -ForegroundColor Green
         (Get-Content $src) `
             -creplace 'CCEIP', $CCEIP |
             Set-Content $dst
@@ -210,6 +211,19 @@ EXEC xp_instance_regwrite
     else {
         Write-Host "Template not found: $conf" -ForegroundColor Yellow
     }
+}
+    else {
+        $dst = Join-Path $nxlogTargetDir "mssql.conf"
+        if (Test-Path $dst) {
+            Remove-Item $dst -Force
+            Write-Host "SQL not installed; removed existing mssql.conf." -ForegroundColor Yellow
+        } else {
+            Write-Host "SQL not installed; mssql.conf not deployed." -ForegroundColor Yellow
+        }
+    }
+    
+    }
+
 
 
 # 6. DYNAMIC SERVICE DETECTION AND CONFIG UPDATE
