@@ -322,14 +322,101 @@ foreach ($service in $serviceMap.Keys) {
                 "IIS" {
                     Import-Module WebAdministration
                     $allFields = "Date,Time,ClientIP,UserName,SiteName,ComputerName,ServerIP,Method,UriStem,UriQuery,HttpStatus,Win32Status,BytesSent,BytesRecv,TimeTaken,ServerPort,UserAgent,Cookie,Referer,ProtocolVersion,Host,HttpSubStatus"
+
+                    # Apply to siteDefaults so new sites inherit these fields going forward
                     Set-WebConfigurationProperty `
                         -Filter "/system.applicationHost/sites/siteDefaults/logFile" `
                         -Name "logExtFileFlags" `
                         -Value $allFields
-                    $logPath = [Environment]::ExpandEnvironmentVariables(
-    (Get-ItemProperty "IIS:\Sites\Default Web Site").logFile.directory
-) + "\W3SVC*\u_ex*"
-                    Update-NxlogConf -Service "IIS" -LogPath $logPath
+
+                    # Fetch all IIS sites and their log paths dynamically
+                    $sites = Get-Website
+
+                    # Apply log fields to each existing site individually (overrides any per-site overrides)
+                    foreach ($site in $sites) {
+                        try {
+                            Set-WebConfigurationProperty `
+                                -Filter "/system.applicationHost/sites/site[@name='$($site.Name)']/logFile" `
+                                -Name "logExtFileFlags" `
+                                -Value $allFields
+                            Write-Host "IIS: Log fields applied to site '$($site.Name)'" -ForegroundColor Gray
+                        } catch {
+                            Write-Host "IIS: Failed to apply log fields to site '$($site.Name)': $_" -ForegroundColor Red
+                        }
+                    }
+                    if (-not $sites) {
+                        Write-Host "IIS: No sites found. Skipping NXLog config." -ForegroundColor Yellow
+                        break
+                    }
+
+                    # Build a list of unique base directories
+                    $siteLogInfo = $sites | ForEach-Object {
+                        $baseDir = [Environment]::ExpandEnvironmentVariables($_.logFile.directory)
+                        [PSCustomObject]@{
+                            Name    = $_.Name
+                            ID      = $_.ID
+                            BaseDir = $baseDir
+                            LogPath = "$baseDir\W3SVC$($_.ID)\u_ex*"
+                        }
+                    }
+
+                    $uniqueBases = @($siteLogInfo | Select-Object -ExpandProperty BaseDir | Sort-Object -Unique)
+
+                    $iisTemplate  = Join-Path $nxlogTemplateDir "IIS.conf"
+                    $iisTarget    = Join-Path $nxlogTargetDir   "IIS.conf"
+
+                    if (-not (Test-Path $iisTemplate)) {
+                        Write-Host "IIS: Template not found at $iisTemplate. Skipping." -ForegroundColor Yellow
+                        break
+                    }
+
+                    if ($uniqueBases.Count -eq 1) {
+                        # All sites share the same base — use a single wildcard Input block
+                        $logPath = "$($uniqueBases[0])\W3SVC*\u_ex*"
+                        Write-Host "IIS: All sites share base log dir. Using wildcard path: $logPath" -ForegroundColor Cyan
+                        (Get-Content $iisTemplate) `
+                            -creplace 'LOGPA', $logPath `
+                            -creplace 'CCEIP', $CCEIP |
+                            Set-Content $iisTarget
+                        Write-Host "IIS: NXLog config deployed (single wildcard path)." -ForegroundColor Green
+                    } else {
+                        # Sites have different base directories — generate one Input block per site
+                        Write-Host "IIS: Multiple log base directories detected. Generating per-site Input blocks." -ForegroundColor Cyan
+
+                        $templateContent = Get-Content $iisTemplate -Raw
+
+                        # Extract the Input block template (everything between <Input ...> and </Input>)
+                        $inputBlockTemplate = ($templateContent -split '(?=<Output)')[0].Trim()
+
+                        # Extract the Output and Route blocks (reuse as-is, only replace CCEIP)
+                        $outputAndRoute = ($templateContent -split '(?=<Output)')[1..99] -join "`n"
+                        $outputAndRoute = $outputAndRoute -creplace 'CCEIP', $CCEIP
+
+                        # Build one Input block per site
+                        $inputBlocks = @()
+                        $inputNames  = @()
+                        foreach ($site in $siteLogInfo) {
+                            $safeName   = $site.Name -replace '[^a-zA-Z0-9]', '_'
+                            $inputName  = "in_iis_$safeName"
+                            $inputNames += $inputName
+
+                            # Replace the generic input name and log path in a copy of the Input block
+                            $block = $inputBlockTemplate `
+                                -creplace 'in_iis',  $inputName `
+                                -creplace 'LOGPA',   $site.LogPath
+                            $inputBlocks += $block
+                            Write-Host "  -> Site: '$($site.Name)' | Path: $($site.LogPath)" -ForegroundColor Gray
+                        }
+
+                        # Fix the Route to include all input names
+                        $routeLine     = $inputNames -join ", "
+                        $outputAndRoute = $outputAndRoute -creplace 'in_iis', $routeLine
+
+                        # Write the final combined config
+                        $finalContent = ($inputBlocks -join "`n`n") + "`n`n" + $outputAndRoute
+                        Set-Content -Path $iisTarget -Value $finalContent
+                        Write-Host "IIS: NXLog config deployed ($($siteLogInfo.Count) site(s), separate Input blocks)." -ForegroundColor Green
+                    }
                 }
                 "Exchange" {
                     try {
